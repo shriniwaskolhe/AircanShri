@@ -1,4 +1,4 @@
-from flask import Flask, render_template, Response
+from flask import Flask, render_template, Response, request
 import cv2
 import numpy as np
 import mediapipe as mp
@@ -6,41 +6,44 @@ from collections import deque
 
 app = Flask(__name__)
 
+# Initialize drawing points and indexes
 bpoints = [deque(maxlen=1024)]
 gpoints = [deque(maxlen=1024)]
 rpoints = [deque(maxlen=1024)]
 ypoints = [deque(maxlen=1024)]
 
-blue_index = 0
-green_index = 0
-red_index = 0
-yellow_index = 0
+blue_index, green_index, red_index, yellow_index = 0, 0, 0, 0
 
-kernel = np.ones((5, 5), np.uint8)
-
+# Define colors and paint window
 colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 255, 255)]
 colorIndex = 0
+paintWindow = np.ones((471, 636, 3), dtype=np.uint8) * 255
 
-paintWindow = np.zeros((471, 636, 3)) + 255
-paintWindow = cv2.rectangle(paintWindow, (40, 1), (140, 65), (0, 0, 0), 2)
-paintWindow = cv2.rectangle(paintWindow, (160, 1), (255, 65), (255, 0, 0), 2)
-paintWindow = cv2.rectangle(paintWindow, (275, 1), (370, 65), (0, 255, 0), 2)
-paintWindow = cv2.rectangle(paintWindow, (390, 1), (485, 65), (0, 0, 255), 2)
-paintWindow = cv2.rectangle(paintWindow, (505, 1), (600, 65), (0, 255, 255), 2)
+# Add buttons
+def setup_paint_window():
+    global paintWindow
+    paintWindow[:] = 255
+    cv2.rectangle(paintWindow, (40, 1), (140, 65), (0, 0, 0), 2)
+    cv2.rectangle(paintWindow, (160, 1), (255, 65), (255, 0, 0), 2)
+    cv2.rectangle(paintWindow, (275, 1), (370, 65), (0, 255, 0), 2)
+    cv2.rectangle(paintWindow, (390, 1), (485, 65), (0, 0, 255), 2)
+    cv2.rectangle(paintWindow, (505, 1), (600, 65), (0, 255, 255), 2)
+    cv2.putText(paintWindow, "CLEAR", (49, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+    cv2.putText(paintWindow, "BLUE", (185, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+    cv2.putText(paintWindow, "GREEN", (298, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+    cv2.putText(paintWindow, "RED", (420, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+    cv2.putText(paintWindow, "YELLOW", (520, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
 
-cv2.putText(paintWindow, "CLEAR", (49, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
-cv2.putText(paintWindow, "BLUE", (185, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
-cv2.putText(paintWindow, "GREEN", (298, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
-cv2.putText(paintWindow, "RED", (420, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
-cv2.putText(paintWindow, "YELLOW", (520, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2, cv2.LINE_AA)
+setup_paint_window()
 
+# Mediapipe hand detector
 mpHands = mp.solutions.hands
 hands = mpHands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 mpDraw = mp.solutions.drawing_utils
 
 cap = cv2.VideoCapture(0)
 
-
+# Frame generator for video feed
 def generate_frames():
     global bpoints, gpoints, rpoints, ypoints
     global blue_index, green_index, red_index, yellow_index
@@ -69,7 +72,7 @@ def generate_frames():
             center = fore_finger
             thumb = (landmarks[4][0], landmarks[4][1])
 
-            if (thumb[1] - center[1] < 30):
+            if (thumb[1] - center[1] < 30):  # New stroke
                 bpoints.append(deque(maxlen=512))
                 blue_index += 1
                 gpoints.append(deque(maxlen=512))
@@ -79,13 +82,14 @@ def generate_frames():
                 ypoints.append(deque(maxlen=512))
                 yellow_index += 1
 
-            elif center[1] <= 65:
+            elif center[1] <= 65:  # Handle clicks on the color palette
                 if 40 <= center[0] <= 140:  # Clear Button
                     bpoints = [deque(maxlen=512)]
                     gpoints = [deque(maxlen=512)]
                     rpoints = [deque(maxlen=512)]
                     ypoints = [deque(maxlen=512)]
                     paintWindow[67:, :, :] = 255
+                    blue_index = green_index = red_index = yellow_index = 0
                 elif 160 <= center[0] <= 255:
                     colorIndex = 0  # Blue
                 elif 275 <= center[0] <= 370:
@@ -96,12 +100,20 @@ def generate_frames():
                     colorIndex = 3  # Yellow
             else:
                 if colorIndex == 0:
+                    if len(bpoints) <= blue_index:
+                        bpoints.append(deque(maxlen=512))
                     bpoints[blue_index].appendleft(center)
                 elif colorIndex == 1:
+                    if len(gpoints) <= green_index:
+                        gpoints.append(deque(maxlen=512))
                     gpoints[green_index].appendleft(center)
                 elif colorIndex == 2:
+                    if len(rpoints) <= red_index:
+                        rpoints.append(deque(maxlen=512))
                     rpoints[red_index].appendleft(center)
                 elif colorIndex == 3:
+                    if len(ypoints) <= yellow_index:
+                        ypoints.append(deque(maxlen=512))
                     ypoints[yellow_index].appendleft(center)
 
         points = [bpoints, gpoints, rpoints, ypoints]
@@ -117,20 +129,13 @@ def generate_frames():
         frame = buffer.tobytes()
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-
-
 @app.route('/')
 def index():
     return render_template('index.html')
 
-
 @app.route('/video_feed')
 def video_feed():
-    try:
-        return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
-    except Exception as e:
-        print(f"Error in video feed: {e}")
-        return "Video feed error."
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/paint_feed')
 def paint_feed():
@@ -144,12 +149,9 @@ def paint_feed():
 
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
-    print("Releasing camera resources and shutting down.")
     cap.release()
     cv2.destroyAllWindows()
     return "Shutting Down"
-
-
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5000)
